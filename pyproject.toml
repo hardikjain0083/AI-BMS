@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ebms-sim"
+version = "0.1.0"
+description = "Physics-based simulator and synthetic-data generator for Indian e-rickshaw BMS"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Antigravity Team" }
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scipy>=1.10.0",
+    "scikit-learn>=1.2.0",
+    "xgboost>=1.7.0",
+    "pyarrow>=12.0.0",
+    "matplotlib>=3.7.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+
+[project.scripts]
+ebms-datagen = "ebms_sim.datagen:main"
+ebms-train = "ebms_sim.train:main"
+
+[tool.setuptools.packages.find]
+include = ["ebms_sim*", "app*"]
+exclude = ["tests*", "notebooks*", "data*", "models*", "c_embedded*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v"
+

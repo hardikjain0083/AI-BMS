@@ -1,0 +1,15 @@
+venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Generated demo and dataset artifacts
+demo_*.png
+data/*.parquet
+data/*.csv
+
+# Local tooling and editor files
+.vscode/
+.idea/
+*.log

@@ -1,0 +1,89 @@
+# ==============================================================================
+# ebms-sim: Configuration and Calibration File for Indian E-Rickshaws
+# ==============================================================================
+# This configuration file specifies physical parameters for vehicle longitudinal
+# dynamics, battery electrochemical models, lumped pack thermal evolution, and
+# smart charging constraints.
+#
+# Calibration Notice:
+# All baseline parameters are derived from standard literature and manufacturer
+# datasheets for Indian L5M / e-rickshaw three-wheelers. Telemetry from physical
+# vehicles (CAN bus / IoT gateway) should be used to recalibrate these parameters.
+# ==============================================================================
+
+vehicle:
+  curb_mass_kg: 340.0              # Unladen mass of vehicle without driver/passengers [kg]
+  driver_mass_kg: 65.0             # Mass of driver [kg]
+  crr: 0.018                       # Rolling resistance coefficient on asphalt [dimensionless]
+  cda_m2: 0.85                     # Aerodynamic drag area Cd * A [m^2]
+  eta_drive: 0.82                  # Inverter + motor + transmission efficiency [0..1]
+  eta_regen: 0.0                   # Regenerative braking energy recovery efficiency [0..1] (default 0)
+  aux_w: 50.0                      # Continuous auxiliary power (headlights, cluster, horn, BMS) [W]
+  rotational_inertia_factor: 0.05  # Rotational inertia multiplier for drivetrain/wheels [dimensionless]
+  max_speed_kmh: 25.0              # Legal maximum speed cap for Indian e-rickshaws [km/h]
+
+battery_presets:
+  lead_acid_48V_100Ah:
+    chemistry: "lead_acid"
+    nominal_voltage_v: 48.0        # 4x 12V tubular / AGM gel battery blocks in series [V]
+    nominal_capacity_ah: 100.0     # 20-hour rate capacity (C20) [Ah]
+    nominal_energy_wh: 4800.0      # Nominal energy capacity [Wh]
+    r0_ohm: 0.065                  # Total pack internal resistance at 25C, SOH 1.0 [Ohm]
+    peukert_exp: 1.20              # Peukert exponent k for lead-acid [dimensionless]
+    peukert_i_ref_a: 5.0           # Reference C20 discharge current (100 Ah / 20 h) [A]
+    temp_coeff_r: 0.015            # Resistance temperature coefficient [1/deg C]
+    soh_coeff_r: 0.85              # Resistance degradation coefficient per unit SOH drop [dimensionless]
+    cutoff_soc: 0.10               # Cutoff SOC threshold below which pack is depleted [0..1]
+    max_continuous_current_a: 100.0
+    pack_mass_kg: 130.0
+
+  lfp_51V_60Ah:
+    chemistry: "lfp"
+    nominal_voltage_v: 51.2        # 16S LiFePO4 cells in series (16 x 3.2V) [V]
+    nominal_capacity_ah: 60.0      # Rated capacity [Ah]
+    nominal_energy_wh: 3072.0      # Nominal energy capacity [Wh]
+    r0_ohm: 0.025                  # Total pack internal resistance at 25C, SOH 1.0 [Ohm]
+    peukert_exp: 1.00              # LFP has negligible Peukert capacity loss (k = 1.0)
+    peukert_i_ref_a: 3.0           # Reference current [A]
+    temp_coeff_r: 0.012            # Resistance temperature coefficient [1/deg C]
+    soh_coeff_r: 0.70              # Resistance degradation coefficient per unit SOH drop
+    cutoff_soc: 0.05               # Safe lower cutoff SOC for LFP [0..1]
+    max_continuous_current_a: 120.0
+    pack_mass_kg: 35.0
+
+thermal:
+  c_th_j_per_k: 90000.0            # Lumped pack thermal capacitance (m * cp) [J/K]
+  r_th_k_per_w: 0.65               # Static thermal resistance to ambient air [K/W]
+  cooling_air_velocity_factor: 0.02 # Convective cooling enhancement per m/s vehicle speed [s/m]
+
+charging:
+  lead_acid:
+    max_charge_c_rate: 0.25        # Recommended max charging rate for lead-acid (~25 A)
+    taper_soc: 0.80                # CC-to-CV transition SOC threshold
+    min_charge_current_a: 2.0      # Cutoff current indicating end of CV phase [A]
+  lfp:
+    max_charge_c_rate: 0.50        # Recommended charging rate for LFP (~30 A)
+    taper_soc: 0.90                # CC-to-CV transition SOC threshold
+    min_charge_current_a: 1.5      # Cutoff current indicating end of CV phase [A]
+  thermal_limits:
+    temp_min_c: 0.0                # Temperature below which charging current is strictly 0 A [deg C]
+    temp_ramp_low_c: 5.0           # Temperature where trickle charging begins ramping [deg C]
+    temp_opt_low_c: 15.0           # Start of optimal full-rate charging window [deg C]
+    temp_opt_high_c: 35.0          # End of optimal full-rate charging window [deg C]
+    temp_max_c: 45.0               # Temperature above which charging is aborted [deg C]
+
+datagen:
+  sensor_noise:
+    voltage_pct: 0.005             # +/- 0.5% ADC and wiring harness voltage noise
+    temperature_c: 1.0             # +/- 1.0 deg C NTC thermistor tolerance
+    altitude_m: 3.0                # +/- 3.0 m barometric / GPS elevation jitter
+  parameter_ranges:
+    passengers: [0, 5]             # Range of passenger count (65 kg each)
+    luggage_kg: [0.0, 80.0]        # Additional luggage payload [kg]
+    crr: [0.012, 0.025]            # Rolling resistance variation across road surfaces
+    ambient_c: [5.0, 45.0]         # Indian ambient seasonal temperatures [deg C]
+    soh: [0.70, 1.00]              # Battery health range
+    start_soc: [0.20, 1.00]        # Initial battery state of charge
+    speed_cap_kmh: [15.0, 25.0]    # Legal speed cap range [km/h]
+    headwind_ms: [-3.0, 3.0]       # Wind velocity range [m/s]
+
