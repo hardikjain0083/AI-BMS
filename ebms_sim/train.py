@@ -9,11 +9,34 @@ from __future__ import annotations
 import argparse
 import os
 from typing import Dict, Any, List, Tuple, Optional
+import joblib
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupKFold
 from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, r2_score
 import xgboost as xgb
+
+
+# Exact feature vector known at runtime by the simulator/sidebar for pack power surrogate
+RUNTIME_FEATURE_COLUMNS = [
+    "speed_kmh",
+    "accel_mps2",
+    "road_grade_pct",
+    "passenger_count",
+    "payload_weight_kg",
+    "total_vehicle_mass_kg",
+    "rain_flaps_or_rack",
+    "drag_area_cda_m2",
+    "rolling_resistance_crr",
+    "headwind_mps",
+    "ambient_temp_c",
+    "nominal_voltage_v",
+    "battery_capacity_kwh",
+    "soc_pct",
+    "soh_pct",
+    "is_lfp",
+    "is_nmc",
+]
 
 
 FEATURE_COLUMNS = [
@@ -32,6 +55,135 @@ FEATURE_COLUMNS = [
     "noisy_elevation_gain_m",
     "is_lfp",
 ]
+
+
+def prepare_runtime_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
+    """Prepare runtime driving condition feature matrix for pack_power_kw prediction.
+
+    Crucially excludes internal electrical state outputs (pack_current_a, pack_voltage_v,
+    internal_resistance_mohm) to prevent feature leakage, matching only what the
+    sidebar and vehicle physics actually know at runtime.
+
+    Args:
+        df: DataFrame containing trip telemetry or runtime inputs.
+
+    Returns:
+        Tuple of (X, y_power_kw, groups_trip_id).
+    """
+    df_clean = df.copy()
+
+    # Chemistry indicators (1 for LFP, 1 for NMC, 0 for Lead-Acid)
+    if "is_lfp" not in df_clean.columns:
+        if "battery_chemistry" in df_clean.columns:
+            df_clean["is_lfp"] = (df_clean["battery_chemistry"].astype(str).str.upper() == "LFP").astype(float)
+        elif "chemistry" in df_clean.columns:
+            df_clean["is_lfp"] = (df_clean["chemistry"].astype(str).str.lower() == "lfp").astype(float)
+        else:
+            df_clean["is_lfp"] = 0.0
+
+    if "is_nmc" not in df_clean.columns:
+        if "battery_chemistry" in df_clean.columns:
+            df_clean["is_nmc"] = (df_clean["battery_chemistry"].astype(str).str.upper() == "NMC").astype(float)
+        elif "chemistry" in df_clean.columns:
+            df_clean["is_nmc"] = (df_clean["chemistry"].astype(str).str.lower() == "nmc").astype(float)
+        else:
+            df_clean["is_nmc"] = 0.0
+
+    # Map aliases across dataset schema and runtime inputs
+    if "headwind_mps" not in df_clean.columns and "headwind_ms" in df_clean.columns:
+        df_clean["headwind_mps"] = df_clean["headwind_ms"]
+    if "rolling_resistance_crr" not in df_clean.columns and "crr" in df_clean.columns:
+        df_clean["rolling_resistance_crr"] = df_clean["crr"]
+    if "drag_area_cda_m2" not in df_clean.columns and "cda_m2" in df_clean.columns:
+        df_clean["drag_area_cda_m2"] = df_clean["cda_m2"]
+    if "passenger_count" not in df_clean.columns and "passengers" in df_clean.columns:
+        df_clean["passenger_count"] = df_clean["passengers"]
+    if "payload_weight_kg" not in df_clean.columns and "payload_mass_kg" in df_clean.columns:
+        df_clean["payload_weight_kg"] = df_clean["payload_mass_kg"]
+    if "total_vehicle_mass_kg" not in df_clean.columns:
+        curb = df_clean.get("curb_weight_kg", df_clean.get("curb_mass_kg", 350.0))
+        pld = df_clean.get("payload_weight_kg", df_clean.get("payload_mass_kg", 130.0))
+        df_clean["total_vehicle_mass_kg"] = curb + pld
+    if "rain_flaps_or_rack" not in df_clean.columns:
+        df_clean["rain_flaps_or_rack"] = 0.0
+    if "road_grade_pct" not in df_clean.columns:
+        df_clean["road_grade_pct"] = df_clean.get("grade_pct", df_clean.get("grade_fraction", 0.0) * 100.0)
+    if "accel_mps2" not in df_clean.columns:
+        df_clean["accel_mps2"] = 0.0
+    if "soc_pct" not in df_clean.columns:
+        soc_val = df_clean.get("soc", df_clean.get("start_soc", 0.85))
+        df_clean["soc_pct"] = soc_val * 100.0 if (isinstance(soc_val, (int, float)) and soc_val <= 1.05) else soc_val
+    if "soh_pct" not in df_clean.columns:
+        soh_val = df_clean.get("soh", 1.0)
+        df_clean["soh_pct"] = soh_val * 100.0 if (isinstance(soh_val, (int, float)) and soh_val <= 1.05) else soh_val
+    if "nominal_voltage_v" not in df_clean.columns:
+        df_clean["nominal_voltage_v"] = np.where(df_clean["is_nmc"] == 1.0, 51.8, np.where(df_clean["is_lfp"] == 1.0, 51.2, 48.0))
+    if "battery_capacity_kwh" not in df_clean.columns:
+        df_clean["battery_capacity_kwh"] = np.where(df_clean["is_nmc"] == 1.0, 7.77, np.where(df_clean["is_lfp"] == 1.0, 5.12, 4.8))
+
+    for col in RUNTIME_FEATURE_COLUMNS:
+        if col not in df_clean.columns:
+            df_clean[col] = 0.0
+
+    X = df_clean[RUNTIME_FEATURE_COLUMNS]
+    y_power = df_clean["pack_power_kw"] if "pack_power_kw" in df_clean.columns else pd.Series(0.0, index=df_clean.index)
+    groups = df_clean["trip_id"] if "trip_id" in df_clean.columns else df_clean.get("route_id", pd.Series(1, index=df_clean.index))
+
+    return X, y_power, groups
+
+
+def train_surrogate_pack_power(
+    df: pd.DataFrame,
+    out_path: str = "models/surrogate_model.joblib",
+    n_splits: int = 5,
+    random_state: int = 42,
+) -> Dict[str, Any]:
+    """Train XGBoost surrogate regressor to predict pack_power_kw using runtime driving conditions.
+
+    Saves the final model directly as a compact .joblib artifact.
+    """
+    X, y, groups = prepare_runtime_features(df)
+    gkf = GroupKFold(n_splits=n_splits)
+
+    fold_maes = []
+    fold_r2s = []
+    for train_idx, val_idx in gkf.split(X, y, groups=groups):
+        model = xgb.XGBRegressor(
+            n_estimators=100,
+            max_depth=6,
+            learning_rate=0.10,
+            subsample=0.85,
+            colsample_bytree=0.85,
+            random_state=random_state,
+            n_jobs=2,
+        )
+        model.fit(X.iloc[train_idx], y.iloc[train_idx])
+        preds = model.predict(X.iloc[val_idx])
+        fold_maes.append(float(mean_absolute_error(y.iloc[val_idx], preds)))
+        fold_r2s.append(float(r2_score(y.iloc[val_idx], preds)))
+
+    final_model = xgb.XGBRegressor(
+        n_estimators=100,
+        max_depth=6,
+        learning_rate=0.10,
+        subsample=0.85,
+        colsample_bytree=0.85,
+        random_state=random_state,
+        n_jobs=2,
+    )
+    final_model.fit(X, y)
+
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+    joblib.dump(final_model, out_path)
+
+    return {
+        "model": final_model,
+        "cv_mae_kw": float(np.mean(fold_maes)),
+        "cv_mae_w": float(np.mean(fold_maes) * 1000.0),
+        "cv_r2": float(np.mean(fold_r2s)),
+        "saved_path": out_path,
+        "feature_names": RUNTIME_FEATURE_COLUMNS,
+    }
 
 
 def prepare_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series]:
@@ -304,6 +456,18 @@ def main():
     wh_res["model"].save_model(wh_model_path)
     range_res["model"].save_model(range_model_path)
     print(f"\nModels successfully saved to {wh_model_path} and {range_model_path}")
+
+    # Also save as .joblib for Streamlit Cloud optimization
+    joblib.dump(wh_res["model"], os.path.join(args.out_dir, "model_wh_per_km.joblib"))
+    joblib.dump(range_res["model"], os.path.join(args.out_dir, "model_range_km.joblib"))
+
+    # If dataset has pack_power_kw, train the runtime pack_power surrogate
+    if "pack_power_kw" in df.columns:
+        print("\nTraining pack_power_kw surrogate model on exact runtime features...")
+        joblib_path = os.path.join(args.out_dir, "surrogate_model.joblib")
+        power_res = train_surrogate_pack_power(df, out_path=joblib_path, n_splits=args.folds, random_state=args.seed)
+        print(f"Pack Power Surrogate CV MAE: {power_res['cv_mae_kw']:.4f} kW ({power_res['cv_mae_w']:.1f} W) | R^2: {power_res['cv_r2']:.4f}")
+        print(f"Saved surrogate joblib model to {joblib_path}")
 
 
 if __name__ == "__main__":

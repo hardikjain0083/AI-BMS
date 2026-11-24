@@ -57,10 +57,12 @@ class BatteryParams:
         max_continuous_current_a: Maximum continuous discharge current limit [A].
         pack_mass_kg: Mass of battery pack [kg].
     """
-    chemistry: Literal["lead_acid", "lfp"] = "lead_acid"
+    chemistry: str = "lead_acid"
+    battery_chemistry: str = "Lead-Acid"
     nominal_voltage_v: float = 48.0
     nominal_capacity_ah: float = 100.0
     nominal_energy_wh: float = 4800.0
+    battery_capacity_kwh: float = 4.8
     r0_ohm: float = 0.060
     peukert_exp: float = 1.18
     peukert_i_ref_a: float = 5.0
@@ -135,9 +137,11 @@ PRESETS: Dict[str, Dict[str, Any]] = {
         ),
         "battery": BatteryParams(
             chemistry="lead_acid",
+            battery_chemistry="Lead-Acid",
             nominal_voltage_v=48.0,
             nominal_capacity_ah=100.0,
             nominal_energy_wh=4800.0,
+            battery_capacity_kwh=4.8,
             r0_ohm=0.065,
             peukert_exp=1.20,
             peukert_i_ref_a=5.0,
@@ -163,35 +167,37 @@ PRESETS: Dict[str, Dict[str, Any]] = {
             temp_max_c=45.0,
         ),
     },
-    "lfp_51V_60Ah": {
+    "lfp_51.2V_100Ah": {
         "vehicle": VehicleParams(
-            curb_mass_kg=280.0,
+            curb_mass_kg=310.0,
             driver_mass_kg=65.0,
             crr=0.018,
             cda_m2=0.85,
             eta_drive=0.85,
-            eta_regen=0.0,
+            eta_regen=0.15,
             aux_w=45.0,
             rotational_inertia_factor=0.05,
             max_speed_kmh=25.0,
         ),
         "battery": BatteryParams(
             chemistry="lfp",
+            battery_chemistry="LFP",
             nominal_voltage_v=51.2,
-            nominal_capacity_ah=60.0,
-            nominal_energy_wh=3072.0,
-            r0_ohm=0.025,
+            nominal_capacity_ah=100.0,
+            nominal_energy_wh=5120.0,
+            battery_capacity_kwh=5.12,
+            r0_ohm=0.022,
             peukert_exp=1.00,  # Negligible Peukert for LFP
-            peukert_i_ref_a=3.0,
+            peukert_i_ref_a=5.0,
             temp_coeff_r=0.012,
             soh_coeff_r=0.70,
             cutoff_soc=0.05,
-            max_continuous_current_a=120.0,
-            pack_mass_kg=35.0,
+            max_continuous_current_a=150.0,
+            pack_mass_kg=48.0,
         ),
         "thermal": ThermalParams(
-            c_th_j_per_k=45000.0,
-            r_th_k_per_w=0.75,
+            c_th_j_per_k=55000.0,
+            r_th_k_per_w=0.70,
             cooling_air_velocity_factor=0.025,
         ),
         "charging": ChargingParams(
@@ -205,7 +211,54 @@ PRESETS: Dict[str, Dict[str, Any]] = {
             temp_max_c=45.0,
         ),
     },
+    "nmc_51.8V_150Ah": {
+        "vehicle": VehicleParams(
+            curb_mass_kg=330.0,
+            driver_mass_kg=65.0,
+            crr=0.018,
+            cda_m2=0.85,
+            eta_drive=0.86,
+            eta_regen=0.20,
+            aux_w=45.0,
+            rotational_inertia_factor=0.05,
+            max_speed_kmh=25.0,
+        ),
+        "battery": BatteryParams(
+            chemistry="nmc",
+            battery_chemistry="NMC",
+            nominal_voltage_v=51.8,
+            nominal_capacity_ah=150.0,
+            nominal_energy_wh=7770.0,
+            battery_capacity_kwh=7.77,
+            r0_ohm=0.018,
+            peukert_exp=1.00,
+            peukert_i_ref_a=7.5,
+            temp_coeff_r=0.010,
+            soh_coeff_r=0.65,
+            cutoff_soc=0.05,
+            max_continuous_current_a=180.0,
+            pack_mass_kg=52.0,
+        ),
+        "thermal": ThermalParams(
+            c_th_j_per_k=65000.0,
+            r_th_k_per_w=0.68,
+            cooling_air_velocity_factor=0.025,
+        ),
+        "charging": ChargingParams(
+            max_charge_c_rate=0.60,
+            taper_soc=0.88,
+            min_charge_current_a=1.5,
+            temp_min_c=0.0,
+            temp_ramp_low_c=5.0,
+            temp_opt_low_c=15.0,
+            temp_opt_high_c=35.0,
+            temp_max_c=45.0,
+        ),
+    },
 }
+
+# Alias for backward compatibility
+PRESETS["lfp_51V_60Ah"] = PRESETS["lfp_51.2V_100Ah"]
 
 
 def get_preset(name: str) -> Dict[str, Any]:

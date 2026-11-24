@@ -26,6 +26,14 @@ LFP_OCV_TABLE = (
     41.60, 48.00, 50.40, 51.50, 52.00, 52.60, 52.70, 52.80, 52.90, 53.00, 53.10, 53.30, 53.60, 54.40
 )
 
+# NMC (nominal 51.8V, 14S, 3.00V - 4.20V per cell)
+NMC_SOC_TABLE = (
+    0.00, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 0.95, 1.00
+)
+NMC_OCV_TABLE = (
+    43.40, 48.00, 49.50, 50.80, 51.50, 52.00, 52.60, 53.40, 54.40, 55.60, 57.00, 57.80, 58.80
+)
+
 
 def _interpolate_1d(x: float, xp: tuple, fp: tuple) -> float:
     """Pure 1D linear interpolation with boundary clamping.
@@ -60,14 +68,17 @@ def ocv_from_soc(soc: float, chemistry: str = "lead_acid") -> float:
 
     Args:
         soc: State of charge fraction [0.0 .. 1.0].
-        chemistry: Battery chemistry ('lead_acid' or 'lfp').
+        chemistry: Battery chemistry ('lead_acid', 'lfp', 'nmc' or case-insensitive).
 
     Returns:
         Pack Open Circuit Voltage in Volts [V].
     """
     clamped_soc = max(0.0, min(1.0, soc))
-    if chemistry == "lfp":
+    chem = chemistry.lower().replace("-", "_")
+    if chem in ("lfp",):
         return _interpolate_1d(clamped_soc, LFP_SOC_TABLE, LFP_OCV_TABLE)
+    elif chem in ("nmc",):
+        return _interpolate_1d(clamped_soc, NMC_SOC_TABLE, NMC_OCV_TABLE)
     return _interpolate_1d(clamped_soc, LEAD_ACID_SOC_TABLE, LEAD_ACID_OCV_TABLE)
 
 

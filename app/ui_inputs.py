@@ -154,11 +154,13 @@ def render_sidebar_inputs() -> Dict[str, Any]:
         "preset",
         st.sidebar.selectbox(
             "Pack Chemistry Preset",
-            ["lead_acid_48V_100Ah", "lfp_51V_60Ah"],
+            ["lead_acid_48V_100Ah", "lfp_51.2V_100Ah", "nmc_51.8V_150Ah"],
             index=0,
             help="Select factory standard traction battery pack specification.",
         )
     )
+    if preset_choice not in PRESETS and preset_choice == "lfp_51V_60Ah":
+        preset_choice = "lfp_51.2V_100Ah"
     preset_data = PRESETS[preset_choice]
 
     # Quick Reset & Freeze Buttons
@@ -173,24 +175,27 @@ def render_sidebar_inputs() -> Dict[str, Any]:
             help="Unladen vehicle chassis mass without passengers.",
         )
         passengers = st.slider(
-            "Passengers (65 kg each)", min_value=0, max_value=5,
+            "Passengers / Passenger Count (1–6)", min_value=1, max_value=6,
             value=int(demo_overrides.get("passengers", 2)),
-            help="Adult passengers in passenger cabin.",
+            help="Adult passengers in passenger cabin (1–6). Directly scales vehicle payload mass.",
         )
         luggage_kg = st.slider(
             "Luggage Mass [kg]", min_value=0.0, max_value=100.0,
             value=float(demo_overrides.get("luggage_kg", 0.0)), step=5.0,
             help="Cargo and luggage payload.",
         )
-        crr = st.slider(
-            "Rolling Coeff Crr", min_value=0.010, max_value=0.030,
-            value=float(preset_data["vehicle"].crr), step=0.001, format="%.3f",
-            help="Tire rolling resistance on asphalt/pavement.",
+        rain_flaps_or_rack = st.checkbox(
+            "Rain Flaps / Roof Rack",
+            value=bool(demo_overrides.get("rain_flaps_or_rack", False)),
+            help="Adds monsoon weather protective side rain flaps or roof carrier (+15 kg mass, +12% aerodynamic drag area Cd*A).",
         )
+        
+        cda_multiplier = 1.12 if rain_flaps_or_rack else 1.0
+        base_cda = float(preset_data["vehicle"].cda_m2)
         cda = st.slider(
-            "Aerodynamic Cd*A [m²]", min_value=0.5, max_value=1.5,
-            value=float(preset_data["vehicle"].cda_m2), step=0.05,
-            help="Frontal area multiplied by drag coefficient.",
+            "Aerodynamic Cd*A [m²]", min_value=0.5, max_value=1.8,
+            value=round(base_cda * cda_multiplier, 3), step=0.05,
+            help="Frontal area multiplied by drag coefficient (scaled by rain flaps / roof rack).",
         )
         eta_model = st.selectbox(
             "Drivetrain Efficiency Model",
@@ -245,13 +250,30 @@ def render_sidebar_inputs() -> Dict[str, Any]:
             help="Outside ambient air temperature.",
         )
         headwind_ms = st.slider(
-            "Headwind Velocity [m/s]", min_value=-5.0, max_value=5.0,
-            value=0.0, step=0.5,
-            help="Wind velocity (+ for headwind, - for tailwind).",
+            "Headwind (m/s)", min_value=-5.0, max_value=10.0,
+            value=float(demo_overrides.get("headwind_ms", 0.0)), step=0.5,
+            help="Wind velocity (+ for headwind, - for tailwind; default 0.0 m/s matches model feature vector).",
         )
 
     # 6. Route Expander
     with st.sidebar.expander("🛣️ Route & Topography", expanded=False):
+        ROAD_SURFACE_CRR = {
+            "Urban Asphalt": 0.013,
+            "Monsoon Waterlogged": 0.021,
+            "Rural Potholed": 0.0225,
+        }
+        road_surface = st.selectbox(
+            "Road Surface",
+            list(ROAD_SURFACE_CRR.keys()),
+            index=0,
+            help="Indian road surface condition. Sets tire rolling resistance Crr.",
+        )
+        surface_crr = ROAD_SURFACE_CRR[road_surface]
+        crr = st.slider(
+            "Rolling Coeff Crr", min_value=0.010, max_value=0.035,
+            value=float(surface_crr), step=0.0005, format="%.4f",
+            help=f"Tire rolling resistance set by {road_surface} (0.013 / 0.021 / 0.0225).",
+        )
         route_type = st.selectbox(
             "Topography Profile",
             ["flat", "rolling", "hill-climb", "hill-descent", "mixed", "custom"],
@@ -320,9 +342,11 @@ def render_sidebar_inputs() -> Dict[str, Any]:
     )
     battery_params = BatteryParams(
         chemistry=preset_data["battery"].chemistry,
+        battery_chemistry=getattr(preset_data["battery"], "battery_chemistry", "Lead-Acid"),
         nominal_voltage_v=preset_data["battery"].nominal_voltage_v,
         nominal_capacity_ah=preset_data["battery"].nominal_capacity_ah,
         nominal_energy_wh=preset_data["battery"].nominal_energy_wh,
+        battery_capacity_kwh=getattr(preset_data["battery"], "battery_capacity_kwh", 4.8),
         r0_ohm=r0_override,
         peukert_exp=preset_data["battery"].peukert_exp,
         peukert_i_ref_a=preset_data["battery"].peukert_i_ref_a,
@@ -335,7 +359,9 @@ def render_sidebar_inputs() -> Dict[str, Any]:
     thermal_params = preset_data["thermal"]
     charging_params = preset_data["charging"]
 
-    payload_mass_kg = passengers * 65.0 + luggage_kg
+    rack_mass_kg = 15.0 if rain_flaps_or_rack else 0.0
+    payload_mass_kg = passengers * 65.0 + luggage_kg + rack_mass_kg
+    total_vehicle_mass_kg = curb_mass + payload_mass_kg
 
     return {
         "vehicle_params": vehicle_params,
@@ -344,9 +370,17 @@ def render_sidebar_inputs() -> Dict[str, Any]:
         "charging_params": charging_params,
         "payload_mass_kg": payload_mass_kg,
         "passengers": passengers,
+        "passenger_count": passengers,
         "luggage_kg": luggage_kg,
+        "payload_weight_kg": payload_mass_kg,
+        "total_vehicle_mass_kg": total_vehicle_mass_kg,
+        "rain_flaps_or_rack": int(rain_flaps_or_rack),
+        "road_surface": road_surface,
+        "rolling_resistance_crr": crr,
+        "drag_area_cda_m2": cda,
         "ambient_temp_c": ambient_temp_c,
         "headwind_ms": headwind_ms,
+        "headwind_mps": headwind_ms,
         "start_soc": start_soc,
         "soh": soh,
         "route_type": route_type,

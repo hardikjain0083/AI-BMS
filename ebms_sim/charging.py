@@ -202,7 +202,8 @@ def max_charge_current_a(
     if soc >= 1.0:
         return 0.0
 
-    if chemistry == "lead_acid":
+    chem = chemistry.lower().replace("-", "_")
+    if chem == "lead_acid":
         # Lead-Acid Charging Model
         # Cutoff above 50C and below 0C
         if temp_c <= lead_acid_temp_min_c or temp_c >= lead_acid_temp_max_c:

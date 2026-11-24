@@ -12,6 +12,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
+# Ensure project root is always in sys.path regardless of execution directory
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -24,48 +25,27 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-try:
-    from app.ui_inputs import render_sidebar_inputs
-    from app.adapters import (
-        REPO_ROOT,
-        cached_simulate_trip,
-        cached_speed_sweep,
-        cached_simulate_charge,
-        calculate_range_confidence_band,
-        compare_flat_vs_hilly_routes,
-        get_charging_matrix_comparison,
-        run_ai_vs_physics_comparison,
-    )
-    from app.ui_plots import (
-        build_trip_simulation_figure,
-        build_speed_sweep_figure,
-        build_range_uncertainty_gauge,
-        build_hills_comparison_bar,
-        build_smart_charging_dashboard,
-        build_scenario_comparison_figure,
-        build_ai_scatter_parity_figure,
-    )
-except ModuleNotFoundError:
-    from ui_inputs import render_sidebar_inputs
-    from adapters import (
-        REPO_ROOT,
-        cached_simulate_trip,
-        cached_speed_sweep,
-        cached_simulate_charge,
-        calculate_range_confidence_band,
-        compare_flat_vs_hilly_routes,
-        get_charging_matrix_comparison,
-        run_ai_vs_physics_comparison,
-    )
-    from ui_plots import (
-        build_trip_simulation_figure,
-        build_speed_sweep_figure,
-        build_range_uncertainty_gauge,
-        build_hills_comparison_bar,
-        build_smart_charging_dashboard,
-        build_scenario_comparison_figure,
-        build_ai_scatter_parity_figure,
-    )
+from app.ui_inputs import render_sidebar_inputs
+from app.adapters import (
+    REPO_ROOT,
+    cached_simulate_trip,
+    cached_speed_sweep,
+    cached_simulate_charge,
+    calculate_range_confidence_band,
+    compare_flat_vs_hilly_routes,
+    get_charging_matrix_comparison,
+    run_ai_vs_physics_comparison,
+    load_tuktuk_replay_trips,
+)
+from app.ui_plots import (
+    build_trip_simulation_figure,
+    build_speed_sweep_figure,
+    build_range_uncertainty_gauge,
+    build_hills_comparison_bar,
+    build_smart_charging_dashboard,
+    build_scenario_comparison_figure,
+    build_ai_scatter_parity_figure,
+)
 from ebms_sim.profiles import generate_speed_profile, generate_gradient_profile
 from ebms_sim.optimizer import optimize_trip_speeds_dp, RouteSegment
 from ebms_sim.charging import temperature_charge_multiplier
@@ -174,21 +154,69 @@ def main():
     with tabs[0]:
         st.subheader("1-Second Resolution Trip Simulation")
 
-        # Metric Cards
-        m_c1, m_c2, m_c3, m_c4, m_c5, m_c6 = st.columns(6)
-        m_c1.metric("Specific Consumption", f"{summary['wh_per_km']:.1f} Wh/km")
-        m_c2.metric("Distance Covered", f"{summary['distance_km']:.2f} km")
-        m_c3.metric("Total Energy", f"{summary['total_energy_wh']:.1f} Wh")
-        m_c4.metric("Final SOC", f"{summary['final_soc']*100:.1f} %", delta=f"{(summary['final_soc']-start_soc)*100:.1f}%")
-        m_c5.metric("Peak Current", f"{np.max(ts_df['current_a']):.1f} A")
-        m_c6.metric("Peak Pack Temp", f"{np.max(ts_df['temp_c']):.1f} °C", delta=f"{np.max(ts_df['temp_c'])-ambient_temp_c:+.1f}°C")
+        tab1_mode = st.radio(
+            "Telemetry Source",
+            ["⚡ Live Physics Simulation", "🔄 Replay Dataset Trip (Tuk-Tuk Telemetry)"],
+            horizontal=True,
+            help="Choose between real-time longitudinal vehicle dynamics or recorded Indian e-rickshaw trips.",
+        )
 
-        if summary["cutoff_reached"]:
-            st.error("⚠️ Battery reached low-SOC cutoff threshold before trip completion!")
+        if tab1_mode == "⚡ Live Physics Simulation":
+            # Metric Cards
+            m_c1, m_c2, m_c3, m_c4, m_c5, m_c6 = st.columns(6)
+            m_c1.metric("Specific Consumption", f"{summary['wh_per_km']:.1f} Wh/km")
+            m_c2.metric("Distance Covered", f"{summary['distance_km']:.2f} km")
+            m_c3.metric("Total Energy", f"{summary['total_energy_wh']:.1f} Wh")
+            m_c4.metric("Final SOC", f"{summary['final_soc']*100:.1f} %", delta=f"{(summary['final_soc']-start_soc)*100:.1f}%")
+            m_c5.metric("Peak Current", f"{np.max(ts_df['current_a']):.1f} A")
+            m_c6.metric("Peak Pack Temp", f"{np.max(ts_df['temp_c']):.1f} °C", delta=f"{np.max(ts_df['temp_c'])-ambient_temp_c:+.1f}°C")
 
-        # Interactive Plotly Figures
-        fig_trip = build_trip_simulation_figure(ts_df)
-        st.plotly_chart(fig_trip, use_container_width=True)
+            if summary["cutoff_reached"]:
+                st.error("⚠️ Battery reached low-SOC cutoff threshold before trip completion!")
+
+            # Interactive Plotly Figures
+            fig_trip = build_trip_simulation_figure(ts_df)
+            st.plotly_chart(fig_trip, use_container_width=True)
+
+        else:
+            df_replay = load_tuktuk_replay_trips()
+            if df_replay.empty:
+                st.info("No recorded trips found. Compact replay dataset will be generated automatically at data/tuktuk_trips_subset.parquet.")
+            else:
+                trip_ids = sorted(df_replay["trip_id"].unique())
+                col_sel1, col_sel2, col_sel3 = st.columns([3, 2, 2])
+
+                def trip_label(tid):
+                    sub = df_replay[df_replay["trip_id"] == tid].iloc[0]
+                    return f"Trip #{tid} - {sub['road_regime']} ({sub['battery_chemistry']} {sub['battery_capacity_kwh']} kWh, {sub['rickshaw_class']})"
+
+                sel_trip_id = col_sel1.selectbox("Select Representative Recorded Trip", trip_ids, format_func=trip_label)
+                approx_wheel = col_sel2.checkbox("Approximate Wheel Power", value=True, help="Estimates Wheel Power (W) as pack_power_kw * 1000 * 0.84 for discharge.")
+                hide_wheel = col_sel3.checkbox("Hide Wheel Power Trace", value=False, help="Hides the Wheel Power trace on Chart 2.")
+
+                trip_data = df_replay[df_replay["trip_id"] == sel_trip_id].copy().reset_index(drop=True)
+
+                # Metric Cards for replayed trip (aligning units: pack_power_kw -> W)
+                p_kw = trip_data["pack_power_kw"]
+                tot_energy_wh = float(np.sum(p_kw * 1000.0 * (1.0 / 3600.0)))
+                dist_covered_km = float(trip_data["distance_km"].iloc[-1] - trip_data["distance_km"].iloc[0])
+                avg_rate_wh_km = float(tot_energy_wh / max(0.01, dist_covered_km))
+
+                m_c1, m_c2, m_c3, m_c4, m_c5, m_c6 = st.columns(6)
+                m_c1.metric("Specific Consumption", f"{avg_rate_wh_km:.1f} Wh/km")
+                m_c2.metric("Distance Covered", f"{dist_covered_km:.2f} km")
+                m_c3.metric("Total Energy", f"{tot_energy_wh:.1f} Wh")
+                m_c4.metric("Final SOC", f"{trip_data['soc_pct'].iloc[-1]:.1f} %", delta=f"{trip_data['soc_pct'].iloc[-1] - trip_data['soc_pct'].iloc[0]:.1f}%")
+                m_c5.metric("Peak Current", f"{np.max(trip_data['pack_current_a']):.1f} A")
+                m_c6.metric("Peak Pack Temp", f"{np.max(trip_data['battery_temp_c']):.1f} °C", delta=f"{trip_data['battery_temp_c'].iloc[-1] - trip_data['ambient_temp_c'].iloc[0]:+.1f}°C")
+
+                fig_replay = build_trip_simulation_figure(
+                    trip_data,
+                    title_suffix=f" (Replay Trip #{sel_trip_id})",
+                    show_wheel_power=not hide_wheel,
+                    approximate_wheel_power=approx_wheel,
+                )
+                st.plotly_chart(fig_replay, use_container_width=True)
 
     # =========================================================================
     # TAB 2: RANGE AND SPEED ADVISOR
@@ -347,15 +375,16 @@ def main():
             headwind_ms=headwind_ms,
             soh=soh,
             start_soc=start_soc,
+            rain_flaps_or_rack=cfg.get("rain_flaps_or_rack", 0),
         )
 
         if not ai_res["available"]:
             st.warning(ai_res["message"])
         else:
             c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Physics Wh/km", f"{ai_res['physics_wh']:.1f} Wh/km", help="Full numerical integration")
-            c2.metric("XGBoost Wh/km", f"{ai_res['ai_wh']:.1f} Wh/km", delta=f"{ai_res['ai_wh'] - ai_res['physics_wh']:+.2f} Wh/km")
-            c3.metric("Surrogate MAPE", f"{ai_res['mape_1000']:.2f} %", help="Evaluated over 1,000 fresh random scenarios")
+            c1.metric("Physics Power", f"{ai_res.get('physics_power_w', 0.0):.0f} W", help="Average battery electrical power from numerical physics engine")
+            c2.metric("Surrogate Power", f"{ai_res.get('ai_power_w', 0.0):.0f} W", delta=f"{ai_res.get('ai_power_w', 0.0) - ai_res.get('physics_power_w', 0.0):+.1f} W", help="Surrogate prediction (pack_power_kw multiplied by 1000 to yield Watts)")
+            c3.metric("Specific Wh/km", f"{ai_res['ai_wh']:.1f} Wh/km", delta=f"{ai_res['ai_wh'] - ai_res['physics_wh']:+.1f} Wh/km")
             c4.metric("Inference Speed-Up", f"{ai_res['speedup_factor']:.0f}x Faster", help="Microsecond evaluation on MCU")
 
             fig_parity = build_ai_scatter_parity_figure(ai_res["true_wh_1000"], ai_res["pred_wh_1000"], ai_res["mape_1000"])
@@ -367,12 +396,37 @@ def main():
     # TAB 7: DATA & MODEL
     # =========================================================================
     with tabs[6]:
-        st.subheader("Synthetic Dataset Distributions & Feature Importance")
+        st.subheader("Indian Tuk-Tuk Telemetry Dataset & Model Distribution")
 
-        data_path = str(REPO_ROOT / "data" / "trips.parquet")
-        if os.path.exists(data_path):
-            df_trips = pd.read_parquet(data_path)
-            st.write(f"Loaded **{len(df_trips)} synthetic trip records** from `{data_path}`.")
+        tuktuk_path = str(REPO_ROOT / "data" / "tuktuk_trips_subset.parquet")
+        generic_path = str(REPO_ROOT / "data" / "trips.parquet")
+
+        if os.path.exists(tuktuk_path):
+            df_trips = pd.read_parquet(tuktuk_path)
+            st.success(
+                f"Loaded **{len(df_trips):,} representative Indian tuk-tuk rows** across **{df_trips['trip_id'].nunique()} trips** "
+                f"({os.path.getsize(tuktuk_path) / (1024*1024):.2f} MB Parquet subset optimized for Streamlit Cloud deployment)."
+            )
+
+            st.markdown("#### Operating Regimes & Battery Chemistries")
+            d_c1, d_c2 = st.columns(2)
+            d_c1.write("**Trips per Road Regime:**")
+            d_c1.dataframe(df_trips.groupby("road_regime")["trip_id"].nunique().rename("Trip Count"), use_container_width=True)
+            d_c2.write("**Vehicle & Chemistry Breakdown:**")
+            d_c2.dataframe(df_trips.groupby(["battery_chemistry", "rickshaw_class"])["trip_id"].nunique().rename("Trip Count"), use_container_width=True)
+
+            st.markdown("#### Feature & Telemetry Distributions")
+            c_hist1, c_hist2, c_hist3 = st.columns(3)
+            c_hist1.write("**Pack Power (kW)**")
+            c_hist1.bar_chart(df_trips["pack_power_kw"].value_counts(bins=20).sort_index())
+            c_hist2.write("**Speed (km/h)**")
+            c_hist2.bar_chart(df_trips["speed_kmh"].value_counts(bins=20).sort_index())
+            c_hist3.write("**Ambient Temperature (°C)**")
+            c_hist3.bar_chart(df_trips["ambient_temp_c"].value_counts(bins=15).sort_index())
+
+        elif os.path.exists(generic_path):
+            df_trips = pd.read_parquet(generic_path)
+            st.write(f"Loaded **{len(df_trips)} synthetic trip records** from `{generic_path}`.")
 
             st.markdown("#### Feature Distributions")
             c_hist1, c_hist2, c_hist3 = st.columns(3)
@@ -380,7 +434,7 @@ def main():
             c_hist2.bar_chart(df_trips["range_remaining_km"].value_counts(bins=20).sort_index())
             c_hist3.bar_chart(df_trips["ambient_temp_c"].value_counts(bins=15).sort_index())
         else:
-            st.info("No generated dataset found at `data/trips.parquet`. Run `python -m ebms_sim.datagen --n 1000` to inspect dataset distributions.")
+            st.info("No generated dataset found. Compact parquet dataset will be generated automatically at `data/tuktuk_trips_subset.parquet`.")
 
     # =========================================================================
     # TAB 8: EQUATIONS & LIMITS

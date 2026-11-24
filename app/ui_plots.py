@@ -11,8 +11,19 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-def build_trip_simulation_figure(df: pd.DataFrame, title_suffix: str = "") -> go.Figure:
-    """Build a 4-row synchronized interactive dashboard of the trip time-series."""
+def build_trip_simulation_figure(
+    df: pd.DataFrame,
+    title_suffix: str = "",
+    show_wheel_power: bool = True,
+    approximate_wheel_power: bool = True,
+) -> go.Figure:
+    """Build a 4-row synchronized interactive dashboard of the trip time-series.
+    
+    Supports both physics simulation outputs and dataset trip replay formats.
+    Aligns units: converts pack_power_kw to Battery Power (W), approximates
+    or hides Wheel Power (W) when replaying dataset trips, and normalizes
+    voltage, current, SOC, and temperature column names.
+    """
     time_min = df["time_s"] / 60.0
 
     fig = make_subplots(
@@ -21,7 +32,7 @@ def build_trip_simulation_figure(df: pd.DataFrame, title_suffix: str = "") -> go
         shared_xaxes=True,
         vertical_spacing=0.06,
         subplot_titles=(
-            "Speed & Road Elevation",
+            f"Speed & Road Elevation{title_suffix}",
             "Wheel Mechanical Power & Battery Electrical Power",
             "Terminal Voltage & Battery Current",
             "State of Charge (SOC) & Pack Temperature",
@@ -30,42 +41,72 @@ def build_trip_simulation_figure(df: pd.DataFrame, title_suffix: str = "") -> go
     )
 
     # 1. Speed & Elevation
+    speed_data = df["speed_kmh"] if "speed_kmh" in df.columns else (df["speed_ms"] * 3.6 if "speed_ms" in df.columns else pd.Series(0.0, index=df.index))
     fig.add_trace(
-        go.Scatter(x=time_min, y=df["speed_kmh"], name="Speed (km/h)", line=dict(color="#1f77b4", width=2)),
+        go.Scatter(x=time_min, y=speed_data, name="Speed (km/h)", line=dict(color="#1f77b4", width=2)),
         row=1, col=1, secondary_y=False,
     )
+    elev_data = df["elevation_m"] if "elevation_m" in df.columns else pd.Series(0.0, index=df.index)
     fig.add_trace(
-        go.Scatter(x=time_min, y=df["elevation_m"], name="Elevation (m)", line=dict(color="#8c564b", width=2, dash="dot")),
+        go.Scatter(x=time_min, y=elev_data, name="Elevation (m)", line=dict(color="#8c564b", width=2, dash="dot")),
         row=1, col=1, secondary_y=True,
     )
 
-    # 2. Power
+    # 2. Power: Align Units (kW -> W) and handle Wheel Power trace
+    # If dataset stores pack_power_kw, multiply by 1000 to get Battery Power (W)
+    if "battery_power_w" in df.columns:
+        batt_power_w = df["battery_power_w"]
+    elif "pack_power_kw" in df.columns:
+        batt_power_w = df["pack_power_kw"] * 1000.0
+    else:
+        batt_power_w = pd.Series(0.0, index=df.index)
+
+    # Wheel Power: use wheel_power_w if present, else approximate as pack_power_kw * 1000 * 0.84 for discharge
+    wheel_power_w = None
+    if "wheel_power_w" in df.columns:
+        wheel_power_w = df["wheel_power_w"]
+    elif approximate_wheel_power:
+        wheel_power_w = np.where(batt_power_w > 0, batt_power_w * 0.84, 0.0)
+
+    if show_wheel_power and wheel_power_w is not None:
+        fig.add_trace(
+            go.Scatter(x=time_min, y=wheel_power_w, name="Wheel Power (W)", line=dict(color="#17becf", width=1.5)),
+            row=2, col=1,
+        )
+
     fig.add_trace(
-        go.Scatter(x=time_min, y=df["wheel_power_w"], name="Wheel Power (W)", line=dict(color="#17becf", width=1.5)),
-        row=2, col=1,
-    )
-    fig.add_trace(
-        go.Scatter(x=time_min, y=df["battery_power_w"], name="Battery Power (W)", line=dict(color="#d62728", width=2)),
+        go.Scatter(x=time_min, y=batt_power_w, name="Battery Power (W)", line=dict(color="#d62728", width=2)),
         row=2, col=1,
     )
 
     # 3. Voltage & Current
+    volt_data = df["voltage_v"] if "voltage_v" in df.columns else df.get("pack_voltage_v", pd.Series(0.0, index=df.index))
+    curr_data = df["current_a"] if "current_a" in df.columns else df.get("pack_current_a", pd.Series(0.0, index=df.index))
     fig.add_trace(
-        go.Scatter(x=time_min, y=df["voltage_v"], name="Voltage (V)", line=dict(color="#9467bd", width=2)),
+        go.Scatter(x=time_min, y=volt_data, name="Voltage (V)", line=dict(color="#9467bd", width=2)),
         row=3, col=1, secondary_y=False,
     )
     fig.add_trace(
-        go.Scatter(x=time_min, y=df["current_a"], name="Current (A)", line=dict(color="#ff7f0e", width=2)),
+        go.Scatter(x=time_min, y=curr_data, name="Current (A)", line=dict(color="#ff7f0e", width=2)),
         row=3, col=1, secondary_y=True,
     )
 
     # 4. SOC & Temperature
+    if "soc" in df.columns:
+        soc_pct = df["soc"] * 100.0 if df["soc"].max() <= 1.05 else df["soc"]
+    elif "soc_pct" in df.columns:
+        soc_pct = df["soc_pct"]
+    else:
+        soc_pct = pd.Series(100.0, index=df.index)
+
+    temp_data = df["temp_c"] if "temp_c" in df.columns else df.get("battery_temp_c", pd.Series(25.0, index=df.index))
+
     fig.add_trace(
-        go.Scatter(x=time_min, y=df["soc"] * 100.0, name="SOC (%)", line=dict(color="#2ca02c", width=2.5)),
+        go.Scatter(x=time_min, y=soc_pct, name="SOC (%)", line=dict(color="#2ca02c", width=2.5)),
         row=4, col=1, secondary_y=False,
     )
     fig.add_trace(
-        go.Scatter(x=time_min, y=df["temp_c"], name="Pack Temp (°C)", line=dict(color="#e377c2", width=2, dash="dash")),
+        go.Scatter(x=time_min, y=temp_data, name="Pack Temp (°C)", line=dict(color="#e377c2", width=2, dash="dash")),
         row=4, col=1, secondary_y=True,
     )
 

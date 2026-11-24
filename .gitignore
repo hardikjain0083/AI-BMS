@@ -6,8 +6,10 @@ __pycache__/
 
 # Generated demo and dataset artifacts
 demo_*.png
-data/*.parquet
+*.csv
 data/*.csv
+data/trips.parquet
+!data/tuktuk_trips_subset.parquet
 
 # Local tooling and editor files
 .vscode/
