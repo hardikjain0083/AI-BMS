@@ -12,13 +12,17 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# Ensure project root and app directory are always in sys.path regardless of execution directory
+# Ensure project root is always in sys.path regardless of execution directory
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_DIR = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
-if str(APP_DIR) not in sys.path:
-    sys.path.insert(0, str(APP_DIR))
+
+# When Streamlit executes app/app.py directly, it registers sys.modules['app'] as a single file module.
+# Setting __path__ ensures Python recognizes 'app' as a package with submodules (ui_inputs, adapters, ui_plots).
+_app_mod = sys.modules.get("app")
+if _app_mod is not None and not hasattr(_app_mod, "__path__"):
+    _app_mod.__path__ = [str(APP_DIR)]
 
 # Set page config
 st.set_page_config(
@@ -28,50 +32,27 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-try:
-    from app.ui_inputs import render_sidebar_inputs
-    from app.adapters import (
-        REPO_ROOT,
-        cached_simulate_trip,
-        cached_speed_sweep,
-        cached_simulate_charge,
-        calculate_range_confidence_band,
-        compare_flat_vs_hilly_routes,
-        get_charging_matrix_comparison,
-        run_ai_vs_physics_comparison,
-        load_tuktuk_replay_trips,
-    )
-    from app.ui_plots import (
-        build_trip_simulation_figure,
-        build_speed_sweep_figure,
-        build_range_uncertainty_gauge,
-        build_hills_comparison_bar,
-        build_smart_charging_dashboard,
-        build_scenario_comparison_figure,
-        build_ai_scatter_parity_figure,
-    )
-except (ImportError, ModuleNotFoundError):
-    from ui_inputs import render_sidebar_inputs
-    from adapters import (
-        REPO_ROOT,
-        cached_simulate_trip,
-        cached_speed_sweep,
-        cached_simulate_charge,
-        calculate_range_confidence_band,
-        compare_flat_vs_hilly_routes,
-        get_charging_matrix_comparison,
-        run_ai_vs_physics_comparison,
-        load_tuktuk_replay_trips,
-    )
-    from ui_plots import (
-        build_trip_simulation_figure,
-        build_speed_sweep_figure,
-        build_range_uncertainty_gauge,
-        build_hills_comparison_bar,
-        build_smart_charging_dashboard,
-        build_scenario_comparison_figure,
-        build_ai_scatter_parity_figure,
-    )
+from app.ui_inputs import render_sidebar_inputs
+from app.adapters import (
+    REPO_ROOT,
+    cached_simulate_trip,
+    cached_speed_sweep,
+    cached_simulate_charge,
+    calculate_range_confidence_band,
+    compare_flat_vs_hilly_routes,
+    get_charging_matrix_comparison,
+    run_ai_vs_physics_comparison,
+    load_tuktuk_replay_trips,
+)
+from app.ui_plots import (
+    build_trip_simulation_figure,
+    build_speed_sweep_figure,
+    build_range_uncertainty_gauge,
+    build_hills_comparison_bar,
+    build_smart_charging_dashboard,
+    build_scenario_comparison_figure,
+    build_ai_scatter_parity_figure,
+)
 from ebms_sim.profiles import generate_speed_profile, generate_gradient_profile
 from ebms_sim.optimizer import optimize_trip_speeds_dp, RouteSegment
 from ebms_sim.charging import temperature_charge_multiplier
