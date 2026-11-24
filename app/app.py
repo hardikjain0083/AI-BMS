@@ -12,10 +12,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# Ensure project root is always in sys.path regardless of execution directory
+# Ensure project root and app directory are always in sys.path regardless of execution directory
 REPO_ROOT = Path(__file__).resolve().parent.parent
+APP_DIR = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
 
 # Set page config
 st.set_page_config(
@@ -25,31 +28,79 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-from app.ui_inputs import render_sidebar_inputs
-from app.adapters import (
-    REPO_ROOT,
-    cached_simulate_trip,
-    cached_speed_sweep,
-    cached_simulate_charge,
-    calculate_range_confidence_band,
-    compare_flat_vs_hilly_routes,
-    get_charging_matrix_comparison,
-    run_ai_vs_physics_comparison,
-    load_tuktuk_replay_trips,
-)
-from app.ui_plots import (
-    build_trip_simulation_figure,
-    build_speed_sweep_figure,
-    build_range_uncertainty_gauge,
-    build_hills_comparison_bar,
-    build_smart_charging_dashboard,
-    build_scenario_comparison_figure,
-    build_ai_scatter_parity_figure,
-)
+try:
+    from app.ui_inputs import render_sidebar_inputs
+    from app.adapters import (
+        REPO_ROOT,
+        cached_simulate_trip,
+        cached_speed_sweep,
+        cached_simulate_charge,
+        calculate_range_confidence_band,
+        compare_flat_vs_hilly_routes,
+        get_charging_matrix_comparison,
+        run_ai_vs_physics_comparison,
+        load_tuktuk_replay_trips,
+    )
+    from app.ui_plots import (
+        build_trip_simulation_figure,
+        build_speed_sweep_figure,
+        build_range_uncertainty_gauge,
+        build_hills_comparison_bar,
+        build_smart_charging_dashboard,
+        build_scenario_comparison_figure,
+        build_ai_scatter_parity_figure,
+    )
+except (ImportError, ModuleNotFoundError):
+    from ui_inputs import render_sidebar_inputs
+    from adapters import (
+        REPO_ROOT,
+        cached_simulate_trip,
+        cached_speed_sweep,
+        cached_simulate_charge,
+        calculate_range_confidence_band,
+        compare_flat_vs_hilly_routes,
+        get_charging_matrix_comparison,
+        run_ai_vs_physics_comparison,
+        load_tuktuk_replay_trips,
+    )
+    from ui_plots import (
+        build_trip_simulation_figure,
+        build_speed_sweep_figure,
+        build_range_uncertainty_gauge,
+        build_hills_comparison_bar,
+        build_smart_charging_dashboard,
+        build_scenario_comparison_figure,
+        build_ai_scatter_parity_figure,
+    )
 from ebms_sim.profiles import generate_speed_profile, generate_gradient_profile
 from ebms_sim.optimizer import optimize_trip_speeds_dp, RouteSegment
 from ebms_sim.charging import temperature_charge_multiplier
 from ebms_sim.sanity import run_all_sanity_checks
+
+
+def render_plotly(fig, container=None, **kwargs):
+    """Render Plotly figure using width='stretch' if supported, else fallback to use_container_width=True."""
+    target = container if container is not None else st
+    try:
+        target.plotly_chart(fig, width="stretch", **kwargs)
+    except TypeError:
+        target.plotly_chart(fig, use_container_width=True, **kwargs)
+
+
+def render_dataframe(df, container=None, **kwargs):
+    """Render DataFrame using width='stretch' if supported, else fallback to use_container_width=True."""
+    target = container if container is not None else st
+    try:
+        target.dataframe(df, width="stretch", **kwargs)
+    except TypeError:
+        target.dataframe(df, use_container_width=True, **kwargs)
+
+
+def binned_series_for_chart(series: pd.Series, bins: int = 20) -> pd.Series:
+    """Compute value counts in bins and format interval labels as clean strings to avoid Altair UserWarning."""
+    vc = series.value_counts(bins=bins).sort_index()
+    vc.index = [f"[{iv.left:.1f}, {iv.right:.1f}]" if hasattr(iv, "left") else str(iv) for iv in vc.index]
+    return vc
 
 
 def main():
@@ -176,7 +227,7 @@ def main():
 
             # Interactive Plotly Figures
             fig_trip = build_trip_simulation_figure(ts_df)
-            st.plotly_chart(fig_trip, use_container_width=True)
+            render_plotly(fig_trip)
 
         else:
             df_replay = load_tuktuk_replay_trips()
@@ -216,7 +267,7 @@ def main():
                     show_wheel_power=not hide_wheel,
                     approximate_wheel_power=approx_wheel,
                 )
-                st.plotly_chart(fig_replay, use_container_width=True)
+                render_plotly(fig_replay)
 
     # =========================================================================
     # TAB 2: RANGE AND SPEED ADVISOR
@@ -231,7 +282,7 @@ def main():
         )
 
         fig_gauge = build_range_uncertainty_gauge(nom_range, min_r, max_r)
-        st.plotly_chart(fig_gauge, use_container_width=True)
+        render_plotly(fig_gauge)
         st.caption(f"ℹ️ **Uncertainty Rule**: {band_exp}")
 
         st.divider()
@@ -261,7 +312,7 @@ def main():
             constrained_spd = dp_res.segment_speeds_kmh[0]
 
         fig_sweep = build_speed_sweep_figure(spds, wh_arr, best_spd, min_wh, constrained_spd)
-        st.plotly_chart(fig_sweep, use_container_width=True)
+        render_plotly(fig_sweep)
 
         # Driver Message Callout
         st.info(
@@ -299,7 +350,7 @@ def main():
             hills_res["hilly_regen_wh_km"],
             hills_res["regen_savings_wh"],
         )
-        st.plotly_chart(fig_hills, use_container_width=True)
+        render_plotly(fig_hills)
 
     # =========================================================================
     # TAB 4: SMART CHARGING
@@ -328,10 +379,10 @@ def main():
         )
 
         fig_charge = build_smart_charging_dashboard(df_t_mult, ch_df, c_slider_temp, bp.chemistry)
-        st.plotly_chart(fig_charge, use_container_width=True)
+        render_plotly(fig_charge)
 
         st.markdown("### 📋 Multi-Temperature Charging Matrix")
-        st.dataframe(get_charging_matrix_comparison(bp, tp, cp, start_soc=0.20, target_soc=0.95), use_container_width=True)
+        render_dataframe(get_charging_matrix_comparison(bp, tp, cp, start_soc=0.20, target_soc=0.95))
 
         st.caption(
             "ℹ️ **Electrochemical Derating Physics**: At cold temperatures (<5°C), lithium-ion cells suffer from lithium plating on the graphite anode, causing permanent dendrite degradation; charging current is therefore restricted to trickle rates. At high temperatures (>45°C for LFP, >50°C for Lead-Acid), charging ceases to prevent thermal runaway and accelerated electrolyte breakdown."
@@ -356,10 +407,10 @@ def main():
                 {"Metric": "Total Energy Used", "Scenario A": f"{sum_a['total_energy_wh']:.1f} Wh", "Scenario B (Current)": f"{sum_b['total_energy_wh']:.1f} Wh", "Delta": f"{sum_b['total_energy_wh'] - sum_a['total_energy_wh']:+.1f} Wh"},
                 {"Metric": "Final Pack SOC", "Scenario A": f"{sum_a['final_soc']*100:.1f} %", "Scenario B (Current)": f"{sum_b['final_soc']*100:.1f} %", "Delta": f"{(sum_b['final_soc'] - sum_a['final_soc'])*100:+.1f} %"},
             ])
-            st.dataframe(delta_df, use_container_width=True)
+            render_dataframe(delta_df)
 
             fig_comp = build_scenario_comparison_figure(sc_a["ts_df"], ts_df, label_a="Scenario A (Frozen)", label_b="Scenario B (Current)")
-            st.plotly_chart(fig_comp, use_container_width=True)
+            render_plotly(fig_comp)
 
     # =========================================================================
     # TAB 6: AI VS PHYSICS
@@ -388,7 +439,7 @@ def main():
             c4.metric("Inference Speed-Up", f"{ai_res['speedup_factor']:.0f}x Faster", help="Microsecond evaluation on MCU")
 
             fig_parity = build_ai_scatter_parity_figure(ai_res["true_wh_1000"], ai_res["pred_wh_1000"], ai_res["mape_1000"])
-            st.plotly_chart(fig_parity, use_container_width=True)
+            render_plotly(fig_parity)
 
             st.caption("ℹ️ **Conceptual Framing**: Machine learning models in BMS serve as **fast numerical approximators** of complex multi-physics differential equations to enable real-time sub-millisecond range and state estimation on low-power 32-bit automotive microcontrollers (ESP32/STM32).")
 
@@ -411,18 +462,18 @@ def main():
             st.markdown("#### Operating Regimes & Battery Chemistries")
             d_c1, d_c2 = st.columns(2)
             d_c1.write("**Trips per Road Regime:**")
-            d_c1.dataframe(df_trips.groupby("road_regime")["trip_id"].nunique().rename("Trip Count"), use_container_width=True)
+            render_dataframe(df_trips.groupby("road_regime")["trip_id"].nunique().rename("Trip Count"), container=d_c1)
             d_c2.write("**Vehicle & Chemistry Breakdown:**")
-            d_c2.dataframe(df_trips.groupby(["battery_chemistry", "rickshaw_class"])["trip_id"].nunique().rename("Trip Count"), use_container_width=True)
+            render_dataframe(df_trips.groupby(["battery_chemistry", "rickshaw_class"])["trip_id"].nunique().rename("Trip Count"), container=d_c2)
 
             st.markdown("#### Feature & Telemetry Distributions")
             c_hist1, c_hist2, c_hist3 = st.columns(3)
             c_hist1.write("**Pack Power (kW)**")
-            c_hist1.bar_chart(df_trips["pack_power_kw"].value_counts(bins=20).sort_index())
+            c_hist1.bar_chart(binned_series_for_chart(df_trips["pack_power_kw"], bins=20))
             c_hist2.write("**Speed (km/h)**")
-            c_hist2.bar_chart(df_trips["speed_kmh"].value_counts(bins=20).sort_index())
+            c_hist2.bar_chart(binned_series_for_chart(df_trips["speed_kmh"], bins=20))
             c_hist3.write("**Ambient Temperature (°C)**")
-            c_hist3.bar_chart(df_trips["ambient_temp_c"].value_counts(bins=15).sort_index())
+            c_hist3.bar_chart(binned_series_for_chart(df_trips["ambient_temp_c"], bins=15))
 
         elif os.path.exists(generic_path):
             df_trips = pd.read_parquet(generic_path)
@@ -430,9 +481,9 @@ def main():
 
             st.markdown("#### Feature Distributions")
             c_hist1, c_hist2, c_hist3 = st.columns(3)
-            c_hist1.bar_chart(df_trips["wh_per_km"].value_counts(bins=20).sort_index())
-            c_hist2.bar_chart(df_trips["range_remaining_km"].value_counts(bins=20).sort_index())
-            c_hist3.bar_chart(df_trips["ambient_temp_c"].value_counts(bins=15).sort_index())
+            c_hist1.bar_chart(binned_series_for_chart(df_trips["wh_per_km"], bins=20))
+            c_hist2.bar_chart(binned_series_for_chart(df_trips["range_remaining_km"], bins=20))
+            c_hist3.bar_chart(binned_series_for_chart(df_trips["ambient_temp_c"], bins=15))
         else:
             st.info("No generated dataset found. Compact parquet dataset will be generated automatically at `data/tuktuk_trips_subset.parquet`.")
 
