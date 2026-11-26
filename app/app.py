@@ -91,6 +91,18 @@ def main():
     # Header
     st.title("⚡ ebms-sim: AI Battery Management System Simulator")
     st.caption("Physics-Based Longitudinal Vehicle Dynamics, Electrochemistry, Thermal Model & AI Surrogate for Indian E-Rickshaws")
+    with st.expander("📖 Start here: terms used across the dashboard", expanded=False):
+        st.markdown("""
+        **What this tool does:** estimates an e-rickshaw trip using a mathematical vehicle-and-battery model, then explores range, charging, and model predictions. It is a simulator, not a live vehicle monitor.
+
+        **Battery options:** **Lead-acid** is a common, lower-cost traction chemistry. **LFP** means *lithium iron phosphate*; it is included as a thermally stable, long-life lithium-ion comparison. **NMC** means *nickel manganese cobalt oxide*; it represents a higher energy-density lithium-ion comparison. Pack voltage and amp-hour values are nominal preset ratings, not a claim that every real pack has those exact properties.
+
+        **SOC** = *state of charge*, the estimated fraction of capacity remaining. **SOH** = *state of health*, a simplified capacity/impedance condition factor (1.0 is the model's healthy baseline). **BMS** = *battery management system*. **Wh/km** means watt-hours consumed per kilometre; lower generally means more distance from the same stored energy. **Regen** means regenerative braking, which returns some braking energy to the battery. **Thermal derating** means reducing charging current to protect a battery at an unsuitable temperature.
+
+        **Crr** is the tire rolling-resistance coefficient; **CdA** is drag coefficient times frontal area. **OCV** is open-circuit voltage (battery voltage without load). The **Peukert effect** describes how lead-acid batteries deliver less usable capacity under higher current. **CC-CV** means constant-current/constant-voltage charging. **DP** is dynamic programming, the method used to select speeds under a trip-time constraint. **MAPE** is mean absolute percentage error, an average relative prediction error.
+
+        **AI surrogate** means a machine-learning approximation of the physics model, not an independently validated battery controller. All outputs depend on the displayed assumptions and are not calibrated against instrumented vehicle or laboratory data.
+        """)
 
     # 2. Render Sidebar Inputs
     cfg = render_sidebar_inputs()
@@ -185,6 +197,7 @@ def main():
     # =========================================================================
     with tabs[0]:
         st.subheader("1-Second Resolution Trip Simulation")
+        st.caption("Each chart follows the trip over elapsed time. Hover a trace for its value; use the legend to show or hide a trace.")
 
         tab1_mode = st.radio(
             "Telemetry Source",
@@ -196,12 +209,12 @@ def main():
         if tab1_mode == "⚡ Live Physics Simulation":
             # Metric Cards
             m_c1, m_c2, m_c3, m_c4, m_c5, m_c6 = st.columns(6)
-            m_c1.metric("Specific Consumption", f"{summary['wh_per_km']:.1f} Wh/km")
-            m_c2.metric("Distance Covered", f"{summary['distance_km']:.2f} km")
-            m_c3.metric("Total Energy", f"{summary['total_energy_wh']:.1f} Wh")
-            m_c4.metric("Final SOC", f"{summary['final_soc']*100:.1f} %", delta=f"{(summary['final_soc']-start_soc)*100:.1f}%")
-            m_c5.metric("Peak Current", f"{np.max(ts_df['current_a']):.1f} A")
-            m_c6.metric("Peak Pack Temp", f"{np.max(ts_df['temp_c']):.1f} °C", delta=f"{np.max(ts_df['temp_c'])-ambient_temp_c:+.1f}°C")
+            m_c1.metric("Specific Consumption", f"{summary['wh_per_km']:.1f} Wh/km", help="Trip electrical energy divided by distance. Lower Wh/km generally indicates more efficient energy use.")
+            m_c2.metric("Distance Covered", f"{summary['distance_km']:.2f} km", help="Distance represented by this simulated trip.")
+            m_c3.metric("Total Energy", f"{summary['total_energy_wh']:.1f} Wh", help="Estimated battery energy used during the trip; 1,000 Wh equals 1 kWh.")
+            m_c4.metric("Final SOC", f"{summary['final_soc']*100:.1f} %", delta=f"{(summary['final_soc']-start_soc)*100:.1f}%", help="Estimated state of charge at trip end. The delta compares it with the selected starting SOC.")
+            m_c5.metric("Peak Current", f"{np.max(ts_df['current_a']):.1f} A", help="Highest modeled battery current during the trip; larger peaks mean a heavier electrical load.")
+            m_c6.metric("Peak Pack Temp", f"{np.max(ts_df['temp_c']):.1f} °C", delta=f"{np.max(ts_df['temp_c'])-ambient_temp_c:+.1f}°C", help="Highest modeled battery-pack temperature. Delta is relative to ambient temperature.")
 
             if summary["cutoff_reached"]:
                 st.error("⚠️ Battery reached low-SOC cutoff threshold before trip completion!")
@@ -209,6 +222,7 @@ def main():
             # Interactive Plotly Figures
             fig_trip = build_trip_simulation_figure(ts_df)
             render_plotly(fig_trip)
+            st.caption("**How to read the trip graph:** top: vehicle speed and road elevation; second: mechanical wheel power versus electrical battery power; third: pack voltage and current; bottom: SOC and pack temperature. The two overlaid values in panels 1, 3, and 4 use separate vertical axes.")
 
         else:
             df_replay = load_tuktuk_replay_trips()
@@ -222,7 +236,12 @@ def main():
                     sub = df_replay[df_replay["trip_id"] == tid].iloc[0]
                     return f"Trip #{tid} - {sub['road_regime']} ({sub['battery_chemistry']} {sub['battery_capacity_kwh']} kWh, {sub['rickshaw_class']})"
 
-                sel_trip_id = col_sel1.selectbox("Select Representative Recorded Trip", trip_ids, format_func=trip_label)
+                sel_trip_id = col_sel1.selectbox(
+                    "Select Representative Recorded Trip",
+                    trip_ids,
+                    format_func=trip_label,
+                    help="Choose one recorded example trip from the bundled telemetry subset. The selection changes the replayed traces and summary metrics.",
+                )
                 approx_wheel = col_sel2.checkbox("Approximate Wheel Power", value=True, help="Estimates Wheel Power (W) as pack_power_kw * 1000 * 0.84 for discharge.")
                 hide_wheel = col_sel3.checkbox("Hide Wheel Power Trace", value=False, help="Hides the Wheel Power trace on Chart 2.")
 
@@ -235,12 +254,12 @@ def main():
                 avg_rate_wh_km = float(tot_energy_wh / max(0.01, dist_covered_km))
 
                 m_c1, m_c2, m_c3, m_c4, m_c5, m_c6 = st.columns(6)
-                m_c1.metric("Specific Consumption", f"{avg_rate_wh_km:.1f} Wh/km")
-                m_c2.metric("Distance Covered", f"{dist_covered_km:.2f} km")
-                m_c3.metric("Total Energy", f"{tot_energy_wh:.1f} Wh")
-                m_c4.metric("Final SOC", f"{trip_data['soc_pct'].iloc[-1]:.1f} %", delta=f"{trip_data['soc_pct'].iloc[-1] - trip_data['soc_pct'].iloc[0]:.1f}%")
-                m_c5.metric("Peak Current", f"{np.max(trip_data['pack_current_a']):.1f} A")
-                m_c6.metric("Peak Pack Temp", f"{np.max(trip_data['battery_temp_c']):.1f} °C", delta=f"{trip_data['battery_temp_c'].iloc[-1] - trip_data['ambient_temp_c'].iloc[0]:+.1f}°C")
+                m_c1.metric("Specific Consumption", f"{avg_rate_wh_km:.1f} Wh/km", help="Recorded energy per distance. Lower Wh/km generally indicates more efficient energy use.")
+                m_c2.metric("Distance Covered", f"{dist_covered_km:.2f} km", help="Recorded distance covered by the selected trip.")
+                m_c3.metric("Total Energy", f"{tot_energy_wh:.1f} Wh", help="Estimated energy represented by the recorded battery-power trace.")
+                m_c4.metric("Final SOC", f"{trip_data['soc_pct'].iloc[-1]:.1f} %", delta=f"{trip_data['soc_pct'].iloc[-1] - trip_data['soc_pct'].iloc[0]:.1f}%", help="Recorded trip's final state of charge; delta is the change from its starting SOC.")
+                m_c5.metric("Peak Current", f"{np.max(trip_data['pack_current_a']):.1f} A", help="Highest recorded battery current in this trip.")
+                m_c6.metric("Peak Pack Temp", f"{np.max(trip_data['battery_temp_c']):.1f} °C", delta=f"{trip_data['battery_temp_c'].iloc[-1] - trip_data['ambient_temp_c'].iloc[0]:+.1f}°C", help="Highest recorded pack temperature; delta compares final pack temperature with trip-start ambient.")
 
                 fig_replay = build_trip_simulation_figure(
                     trip_data,
@@ -249,12 +268,14 @@ def main():
                     approximate_wheel_power=approx_wheel,
                 )
                 render_plotly(fig_replay)
+                st.caption("**How to read the replay graph:** speed/elevation, wheel/battery power, voltage/current, then SOC/temperature are plotted against trip time. Wheel power may be estimated from battery power when the data has no wheel-power measurement; the controls above let you show or hide that estimate.")
 
     # =========================================================================
     # TAB 2: RANGE AND SPEED ADVISOR
     # =========================================================================
     with tabs[1]:
         st.subheader("Range Projection & Optimal Cruising Speed")
+        st.caption("Range is an estimate based on remaining modeled energy and a temperature/SOH uncertainty rule. The speed curve shows energy used per kilometre on a flat-road sweep; its lowest point is the most energy-efficient modeled cruising speed.")
 
         nom_range, min_r, max_r, band_exp = calculate_range_confidence_band(
             nominal_range_km=summary["range_remaining_km"],
@@ -264,6 +285,7 @@ def main():
 
         fig_gauge = build_range_uncertainty_gauge(nom_range, min_r, max_r)
         render_plotly(fig_gauge)
+        st.caption("**Range graph:** the green horizontal span is the estimated low-to-high range interval; the vertical marker is the nominal estimate. It is a modeled uncertainty band, not a statistical guarantee.")
         st.caption(f"ℹ️ **Uncertainty Rule**: {band_exp}")
 
         st.divider()
@@ -294,6 +316,7 @@ def main():
 
         fig_sweep = build_speed_sweep_figure(spds, wh_arr, best_spd, min_wh, constrained_spd)
         render_plotly(fig_sweep)
+        st.caption("**Speed graph:** each point/curve value is modeled Wh/km at a steady speed. The star marks minimum consumption; when a trip-time limit is active, a diamond marks the speed selected to meet that deadline.")
 
         # Driver Message Callout
         st.info(
@@ -307,23 +330,27 @@ def main():
     # =========================================================================
     with tabs[2]:
         st.subheader("Topography Consumption Comparison & Regenerative Braking")
+        if route_type == "custom":
+            st.caption("This comparison holds the selected vehicle and battery assumptions constant while changing the road profile and whether regenerative braking is enabled. The trip simulation uses your custom segments; this comparison uses a representative mixed-road profile because it compares standard generated profiles.")
+        else:
+            st.caption("This comparison holds the selected vehicle and battery assumptions constant while changing the road profile and whether regenerative braking is enabled.")
 
         hills_res = compare_flat_vs_hilly_routes(
             vehicle_params=vp,
             battery_params=bp,
             thermal_params=tp,
             distance_km=distance_km,
-            route_type="hill-climb" if route_type == "flat" else route_type,
+            route_type="mixed" if route_type == "custom" else "hill-climb" if route_type == "flat" else route_type,
             payload_mass_kg=payload_mass_kg,
             ambient_temp_c=ambient_temp_c,
             regen_efficiency=vp.eta_regen,
         )
 
         h_c1, h_c2, h_c3, h_c4 = st.columns(4)
-        h_c1.metric("Flat Terrain", f"{hills_res['flat_wh_km']:.1f} Wh/km")
-        h_c2.metric("Hilly (No Regen)", f"{hills_res['hilly_no_regen_wh_km']:.1f} Wh/km")
-        h_c3.metric("Hilly (With Regen)", f"{hills_res['hilly_regen_wh_km']:.1f} Wh/km")
-        h_c4.metric("Regen Savings", f"{hills_res['regen_savings_wh']:.1f} Wh", delta=f"+{hills_res['regen_range_gain_km']:.2f} km range")
+        h_c1.metric("Flat Terrain", f"{hills_res['flat_wh_km']:.1f} Wh/km", help="Baseline energy per kilometre on a flat route.")
+        h_c2.metric("Hilly (No Regen)", f"{hills_res['hilly_no_regen_wh_km']:.1f} Wh/km", help="Hilly-route energy per kilometre when braking energy is not recovered.")
+        h_c3.metric("Hilly (With Regen)", f"{hills_res['hilly_regen_wh_km']:.1f} Wh/km", help="Hilly-route energy per kilometre with the selected regenerative-braking efficiency.")
+        h_c4.metric("Regen Savings", f"{hills_res['regen_savings_wh']:.1f} Wh", delta=f"+{hills_res['regen_range_gain_km']:.2f} km range", help="Estimated energy recovered versus the no-regeneration hilly case, with its equivalent estimated range gain.")
 
         fig_hills = build_hills_comparison_bar(
             hills_res["flat_wh_km"],
@@ -332,6 +359,7 @@ def main():
             hills_res["regen_savings_wh"],
         )
         render_plotly(fig_hills)
+        st.caption("**Hill graph:** bars compare flat-road consumption with hilly consumption without and with regeneration. A shorter bar means less battery energy per kilometre; recovered energy is summarized separately.")
 
     # =========================================================================
     # TAB 4: SMART CHARGING
@@ -339,7 +367,14 @@ def main():
     with tabs[3]:
         st.subheader(f"Smart Charging & Thermal Derating: {bp.chemistry.upper()}")
 
-        c_slider_temp = st.slider("Inspect Charge Acceptance at Temperature [°C]", -5.0, 50.0, float(ambient_temp_c), 1.0)
+        c_slider_temp = st.slider(
+            "Inspect Charge Acceptance at Temperature [°C]",
+            -5.0,
+            50.0,
+            float(ambient_temp_c),
+            1.0,
+            help="Set the ambient temperature for the example charging session. The model adjusts allowable charging current according to chemistry and temperature.",
+        )
 
         # Generate thermal profile data
         t_range = np.linspace(-5.0, 50.0, 111)
@@ -361,8 +396,10 @@ def main():
 
         fig_charge = build_smart_charging_dashboard(df_t_mult, ch_df, c_slider_temp, bp.chemistry)
         render_plotly(fig_charge)
+        st.caption("**Charging graphs:** left shows the allowed-current multiplier versus pack temperature (1.0 means no temperature reduction; 0 means charging is stopped), with the selected operating point. Right shows SOC rising and charging current changing during the modeled session; SOC and current use the same panel but different units.")
 
         st.markdown("### 📋 Multi-Temperature Charging Matrix")
+        st.caption("Each row compares a modeled charge session at a different ambient temperature. Charging time and peak current are estimates under this preset, not charger recommendations.")
         render_dataframe(get_charging_matrix_comparison(bp, tp, cp, start_soc=0.20, target_soc=0.95))
 
         st.caption(
@@ -374,6 +411,7 @@ def main():
     # =========================================================================
     with tabs[4]:
         st.subheader("Scenario A vs Scenario B Benchmarking")
+        st.caption("Freeze a baseline from the sidebar, then change any inputs. Scenario A is the saved run; Scenario B is the current run.")
 
         if "scenario_a" not in st.session_state:
             st.info("💡 **Freeze Scenario A**: Click 'Freeze Scenario A' in the sidebar to snapshot the current configuration as baseline.")
@@ -388,16 +426,19 @@ def main():
                 {"Metric": "Total Energy Used", "Scenario A": f"{sum_a['total_energy_wh']:.1f} Wh", "Scenario B (Current)": f"{sum_b['total_energy_wh']:.1f} Wh", "Delta": f"{sum_b['total_energy_wh'] - sum_a['total_energy_wh']:+.1f} Wh"},
                 {"Metric": "Final Pack SOC", "Scenario A": f"{sum_a['final_soc']*100:.1f} %", "Scenario B (Current)": f"{sum_b['final_soc']*100:.1f} %", "Delta": f"{(sum_b['final_soc'] - sum_a['final_soc'])*100:+.1f} %"},
             ])
+            st.caption("The table's Delta is Scenario B minus Scenario A. For consumption and energy, a negative delta means the current scenario used less; for range and SOC, a positive delta means more remained.")
             render_dataframe(delta_df)
 
             fig_comp = build_scenario_comparison_figure(sc_a["ts_df"], ts_df, label_a="Scenario A (Frozen)", label_b="Scenario B (Current)")
             render_plotly(fig_comp)
+            st.caption("**Comparison graph:** solid blue is the frozen baseline; dashed orange is the current run. The three panels compare speed, battery power, and SOC over elapsed time.")
 
     # =========================================================================
     # TAB 6: AI VS PHYSICS
     # =========================================================================
     with tabs[5]:
-        st.subheader("XGBoost Neural / Gradient Boosted Surrogate vs Physics Engine")
+        st.subheader("XGBoost Surrogate vs Physics Engine")
+        st.caption("XGBoost is a gradient-boosted decision-tree model (not a neural network here). This panel tests how closely its fast predictions match the simulator's physics-based estimates.")
 
         ai_res = run_ai_vs_physics_comparison(
             vehicle_params=vp,
@@ -416,11 +457,12 @@ def main():
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Physics Power", f"{ai_res.get('physics_power_w', 0.0):.0f} W", help="Average battery electrical power from numerical physics engine")
             c2.metric("Surrogate Power", f"{ai_res.get('ai_power_w', 0.0):.0f} W", delta=f"{ai_res.get('ai_power_w', 0.0) - ai_res.get('physics_power_w', 0.0):+.1f} W", help="Surrogate prediction (pack_power_kw multiplied by 1000 to yield Watts)")
-            c3.metric("Specific Wh/km", f"{ai_res['ai_wh']:.1f} Wh/km", delta=f"{ai_res['ai_wh'] - ai_res['physics_wh']:+.1f} Wh/km")
+            c3.metric("Specific Wh/km", f"{ai_res['ai_wh']:.1f} Wh/km", delta=f"{ai_res['ai_wh'] - ai_res['physics_wh']:+.1f} Wh/km", help="Surrogate's estimated energy per kilometre. Delta is surrogate minus physics result; closer to zero means closer agreement.")
             c4.metric("Inference Speed-Up", f"{ai_res['speedup_factor']:.0f}x Faster", help="Microsecond evaluation on MCU")
 
             fig_parity = build_ai_scatter_parity_figure(ai_res["true_wh_1000"], ai_res["pred_wh_1000"], ai_res["mape_1000"])
             render_plotly(fig_parity)
+            st.caption("**Parity graph:** each dot is one test scenario. The horizontal axis is physics-model consumption and the vertical axis is the AI surrogate prediction. Dots close to the dashed y=x line agree; MAPE is mean absolute percentage error.")
 
             st.caption("ℹ️ **Conceptual Framing**: Machine learning models in BMS serve as **fast numerical approximators** of complex multi-physics differential equations to enable real-time sub-millisecond range and state estimation on low-power 32-bit automotive microcontrollers (ESP32/STM32).")
 
@@ -429,6 +471,7 @@ def main():
     # =========================================================================
     with tabs[6]:
         st.subheader("Indian Tuk-Tuk Telemetry Dataset & Model Distribution")
+        st.caption("The bundled dataset is provided for demonstration and distribution checks; its records are not a live feed from your vehicle.")
 
         tuktuk_path = str(REPO_ROOT / "data" / "tuktuk_trips_subset.parquet")
         generic_path = str(REPO_ROOT / "data" / "trips.parquet")
@@ -441,6 +484,7 @@ def main():
             )
 
             st.markdown("#### Operating Regimes & Battery Chemistries")
+            st.caption("These tables count distinct trips grouped by road regime or by battery chemistry and rickshaw class.")
             d_c1, d_c2 = st.columns(2)
             d_c1.write("**Trips per Road Regime:**")
             render_dataframe(df_trips.groupby("road_regime")["trip_id"].nunique().rename("Trip Count"), container=d_c1)
@@ -448,6 +492,7 @@ def main():
             render_dataframe(df_trips.groupby(["battery_chemistry", "rickshaw_class"])["trip_id"].nunique().rename("Trip Count"), container=d_c2)
 
             st.markdown("#### Feature & Telemetry Distributions")
+            st.caption("Each histogram groups recorded values into ranges (bins). Taller bars mean more rows fall in that range; these describe the bundled sample, not all Indian e-rickshaw operation.")
             c_hist1, c_hist2, c_hist3 = st.columns(3)
             c_hist1.write("**Pack Power (kW)**")
             c_hist1.bar_chart(binned_series_for_chart(df_trips["pack_power_kw"], bins=20))
@@ -489,6 +534,7 @@ def main():
         st.latex(r"C_{\text{th}} \frac{dT}{dt} = I^2 R - \frac{T - T_{\text{amb}}}{R_{\text{th\_eff}}}, \quad R_{\text{th\_eff}} = \frac{R_{\text{th}}}{1 + \gamma v}")
 
         st.markdown("#### 5. Known Assumptions & Limitations")
+        st.caption("The equations are compact explanations of the model's main relationships. Read the assumptions before interpreting estimates as real-world performance.")
         st.markdown("""
         - **No Hardware Validation**: Physics equations reflect first-principles engineering models; not yet calibrated against physical e-rickshaw dynamometer or road telemetry.
         - **Linear CC-CV Approximation**: CV charging uses a linear ramp approximation rather than full electrochemical double-layer overpotential ODEs.
@@ -501,7 +547,7 @@ def main():
     # =========================================================================
     with tabs[8]:
         st.subheader("Live Model Physical Sanity Checks (`sanity.py`)")
-        st.caption("Verifies fundamental thermodynamic laws, monotonicity, and safety boundaries on current parameters.")
+        st.caption("Checks whether the selected parameters satisfy basic physical relationships, expected trends (monotonicity), and safety boundaries. A pass means the model check passed; it does not certify a real battery or vehicle.")
 
         checks = run_all_sanity_checks(vp, bp, tp)
 
@@ -514,4 +560,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

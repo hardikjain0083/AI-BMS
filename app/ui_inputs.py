@@ -124,10 +124,16 @@ GUIDED_DEMO_STEPS = [
 def render_sidebar_inputs() -> Dict[str, Any]:
     """Render all sidebar inputs and return structured configuration dictionary."""
     st.sidebar.title("⚡ ebms-sim Control Panel")
+    st.sidebar.caption("Set the vehicle, battery, weather, and route assumptions used by every analysis.")
 
     # 1. Guided Demo Walkthrough
     st.sidebar.markdown("### 🎓 Guided Professor Demo")
-    demo_active = st.sidebar.toggle("Enable Guided Demo Mode", value=False)
+    st.sidebar.caption("Use these prepared examples to see how changing one operating condition affects the model.")
+    demo_active = st.sidebar.toggle(
+        "Enable Guided Demo Mode",
+        value=False,
+        help="Walk through prepared examples that change the inputs for you. Useful for seeing how load, hills, cold, speed, charging, and the AI comparison affect results.",
+    )
     step_info = None
 
     if demo_active:
@@ -140,10 +146,10 @@ def render_sidebar_inputs() -> Dict[str, Any]:
         st.sidebar.info(f"**{step_info['title']}**\n\n{step_info['caption']}")
 
         col_b1, col_b2 = st.sidebar.columns(2)
-        if col_b1.button("⬅️ Previous") and curr_step > 0:
+        if col_b1.button("⬅️ Previous", help="Return to the previous guided example."):
             st.session_state["demo_step"] -= 1
             st.rerun()
-        if col_b2.button("Next ➡️") and curr_step < len(GUIDED_DEMO_STEPS) - 1:
+        if col_b2.button("Next ➡️", help="Advance to the next guided example."):
             st.session_state["demo_step"] += 1
             st.rerun()
 
@@ -156,19 +162,34 @@ def render_sidebar_inputs() -> Dict[str, Any]:
             "Pack Chemistry Preset",
             ["lead_acid_48V_100Ah", "lfp_51.2V_100Ah", "nmc_51.8V_150Ah"],
             index=0,
-            help="Select factory standard traction battery pack specification.",
+            format_func=lambda value: {
+                "lead_acid_48V_100Ah": "Lead-acid — 48 V, 100 Ah",
+                "lfp_51.2V_100Ah": "LFP — 51.2 V, 100 Ah",
+                "nmc_51.8V_150Ah": "NMC — 51.8 V, 150 Ah",
+            }[value],
+            help="Choose the battery chemistry and nominal pack rating used throughout the simulation. Lead-acid is a common low-cost traction pack; LFP means lithium iron phosphate and is selected for thermal stability and long cycle life; NMC means nickel manganese cobalt oxide and represents a higher energy-density lithium-ion pack.",
         )
     )
     if preset_choice not in PRESETS and preset_choice == "lfp_51V_60Ah":
         preset_choice = "lfp_51.2V_100Ah"
     preset_data = PRESETS[preset_choice]
+    chemistry_explanations = {
+        "lead_acid_48V_100Ah": "Lead-acid (48 V, 100 Ah): a widely used, lower-cost traction battery. Its usable capacity falls more under high current because the model includes the Peukert effect.",
+        "lfp_51.2V_100Ah": "LFP = lithium iron phosphate (51.2 V, 100 Ah): chosen as a stable lithium-ion option with a long cycle life and a relatively flat voltage-versus-charge curve.",
+        "nmc_51.8V_150Ah": "NMC = nickel manganese cobalt oxide (51.8 V, 150 Ah): included as a higher energy-density lithium-ion comparison. The preset is a model scenario, not a validated pack specification.",
+    }
+    st.sidebar.info(chemistry_explanations[preset_choice])
 
     # Quick Reset & Freeze Buttons
     col_btn1, col_btn2 = st.sidebar.columns(2)
-    freeze_scenario_a = col_btn2.button("❄️ Freeze Scenario A", help="Save current inputs as baseline Scenario A.")
+    freeze_scenario_a = col_btn2.button(
+        "❄️ Freeze Scenario A",
+        help="Save the current simulation as Scenario A so the Scenario Comparison tab can compare later settings against this baseline.",
+    )
 
     # 3. Vehicle Expander
     with st.sidebar.expander("🚗 Vehicle Dynamics", expanded=False):
+        st.caption("Vehicle mass, drag, drivetrain losses, and accessory loads determine how much power the battery must supply.")
         curb_mass = st.number_input(
             "Curb Mass [kg]", min_value=200.0, max_value=500.0,
             value=float(preset_data["vehicle"].curb_mass_kg), step=10.0,
@@ -201,6 +222,10 @@ def render_sidebar_inputs() -> Dict[str, Any]:
             "Drivetrain Efficiency Model",
             ["constant", "loss_based"],
             index=0 if demo_overrides.get("eta_model", "constant") == "constant" else 1,
+            format_func=lambda value: {
+                "constant": "Constant efficiency",
+                "loss_based": "Load-dependent losses",
+            }[value],
             help="Constant efficiency or load-dependent quadratic loss model.",
         )
         eta_drive = st.slider(
@@ -221,6 +246,7 @@ def render_sidebar_inputs() -> Dict[str, Any]:
 
     # 4. Battery Expander
     with st.sidebar.expander("🔋 Battery Pack State", expanded=False):
+        st.caption("Set the pack's starting charge, health, resistance, and low-charge protection threshold.")
         start_soc = st.slider(
             "Initial State of Charge (SOC)", min_value=0.10, max_value=1.00,
             value=0.85, step=0.05, format="%.2f",
@@ -244,6 +270,7 @@ def render_sidebar_inputs() -> Dict[str, Any]:
 
     # 5. Environment Expander
     with st.sidebar.expander("🌡️ Ambient Environment", expanded=False):
+        st.caption("Weather affects battery capacity/resistance and the aerodynamic load from wind.")
         ambient_temp_c = st.slider(
             "Ambient Temperature [°C]", min_value=-5.0, max_value=48.0,
             value=float(demo_overrides.get("temp_c", 25.0)), step=1.0,
@@ -257,6 +284,7 @@ def render_sidebar_inputs() -> Dict[str, Any]:
 
     # 6. Route Expander
     with st.sidebar.expander("🛣️ Route & Topography", expanded=False):
+        st.caption("Road surface controls tire losses; route grade and distance shape the simulated journey.")
         ROAD_SURFACE_CRR = {
             "Urban Asphalt": 0.013,
             "Monsoon Waterlogged": 0.021,
@@ -280,7 +308,15 @@ def render_sidebar_inputs() -> Dict[str, Any]:
             index=["flat", "rolling", "hill-climb", "hill-descent", "mixed", "custom"].index(
                 demo_overrides.get("route_type", "flat")
             ),
-            help="Select route elevation profile geometry.",
+            format_func=lambda value: {
+                "flat": "Flat — no sustained slope",
+                "rolling": "Rolling — gentle ups and downs",
+                "hill-climb": "Hill climb — mostly uphill",
+                "hill-descent": "Hill descent — mostly downhill",
+                "mixed": "Mixed — varied grades",
+                "custom": "Custom — edit route segments",
+            }[value],
+            help="Choose the elevation shape of the simulated road. Uphill sections need extra traction power; downhill sections may permit regenerative braking.",
         )
         distance_km = st.slider(
             "Trip Distance [km]", min_value=1.0, max_value=20.0,
@@ -291,16 +327,32 @@ def render_sidebar_inputs() -> Dict[str, Any]:
         custom_df = None
         if route_type == "custom":
             st.markdown("**Custom Segment Table**")
+            st.caption("Build the route in order: segment length is in metres; grade is a percentage (positive uphill, negative downhill). The route shape changes traction demand and possible energy recovery.")
             default_segs = pd.DataFrame([
                 {"length_m": 500, "grade_pct": 0.0},
                 {"length_m": 800, "grade_pct": 3.5},
                 {"length_m": 700, "grade_pct": -2.0},
                 {"length_m": 1000, "grade_pct": 0.5},
             ])
-            custom_df = st.data_editor(default_segs, num_rows="dynamic")
+            custom_df = st.data_editor(
+                default_segs,
+                num_rows="dynamic",
+                column_config={
+                    "length_m": st.column_config.NumberColumn(
+                        "Segment Length [m]",
+                        help="Distance covered by this route segment, in metres.",
+                        min_value=10,
+                    ),
+                    "grade_pct": st.column_config.NumberColumn(
+                        "Road Grade [%]",
+                        help="Slope as a percentage: positive is uphill; negative is downhill.",
+                    ),
+                },
+            )
 
     # 7. Driving Style Expander
     with st.sidebar.expander("⏱️ Driving Behavior & Constraints", expanded=False):
+        st.caption("Limit the simulated speed and optionally trade energy efficiency for a required arrival time.")
         speed_cap = st.slider(
             "Speed Cap [km/h]", min_value=10.0, max_value=25.0,
             value=float(demo_overrides.get("speed_cap_kmh", 22.0)), step=1.0,
@@ -311,7 +363,11 @@ def render_sidebar_inputs() -> Dict[str, Any]:
             value=1.0, step=0.1,
             help="Acceleration and braking intensity.",
         )
-        enable_time_constraint = st.checkbox("Enforce Max Trip Time Constraint", value=False)
+        enable_time_constraint = st.checkbox(
+            "Enforce Max Trip Time Constraint",
+            value=False,
+            help="Ask the speed advisor to meet a trip deadline. The optimizer may choose a faster, less energy-efficient cruising speed.",
+        )
         max_time_min = None
         if enable_time_constraint:
             min_possible_min = (distance_km / 25.0) * 60.0
@@ -392,4 +448,3 @@ def render_sidebar_inputs() -> Dict[str, Any]:
         "freeze_scenario_a": freeze_scenario_a,
         "preset_choice": preset_choice,
     }
-
